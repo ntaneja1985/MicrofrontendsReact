@@ -138,3 +138,216 @@ module.exports = {
 ```
 
 ## Basics of Module Federation
+- Now we need to set up our integration process.
+- We need to call Products from the Container
+- ![img_29.png](img_29.png)
+- For this go to the products folder and inside its webpack.config.js add the following code
+```js
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+module.exports = {
+    mode: "development",
+    devServer: {
+        port: 8081,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'products',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './ProductsIndex':'./src/index'
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+```
+- Note that remoteEntry.js specifies the various modules that can be loaded from the Products project
+- Further, in the webpack.config.js file of the container application, we have this code:
+```js
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");
+module.exports = {
+    mode: 'development',
+    devServer: {
+        port: 8080,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes:{
+                products : 'products@http://localhost:8081/remoteEntry.js'
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+}
+```
+- This code looks mysterious at first
+- Notice that when we run the products code(running on localhost:8081) from container project(localhost:8080), we can go to network tab and see this
+- ![img_30.png](img_30.png)
+- Notice that 3 files are coming from localhost:8081
+- We can explain this process with the following diagram:
+- ![img_31.png](img_31.png)
+- Think of remoteEntry.js file as a sort of directions for other projects. 
+- These directions tell the container how to load source code from the products project
+- The src/index.js contains the actual code exposed by the products project
+- Micro-frontends in React using the Module Federation Plugin (part of Webpack 5) allow you to break a large React application into smaller, independently deployable modules. 
+- Each module can be developed, tested, and deployed separately, yet they integrate seamlessly at runtime. This approach improves scalability, team autonomy, and code maintainability.
+- Module Federation enables a JavaScript application to dynamically load code from another application or module at runtime.
+- Each micro-frontend is a standalone app with its own build process, but they share dependencies and expose components or modules to one another.
+- A host application loads remote modules (exposed by other apps) using Webpack's configuration.
+- Real-World Examples
+- E-commerce Platform: A retail site splits its UI into micro-frontends:
+- Product catalog (React app)
+- Shopping cart (React app)
+- User authentication (React app) Each team works independently, deploying updates without affecting others. 
+- The cart module can be reused across the main site and mobile app.
+
+### Understanding how Module Federation Plugin works in Container Application
+- ![img_32.png](img_32.png)
+- Why do we need index.js file inside container application? Especially when all it contains is import('./bootstrap')
+- This basically is because Webpack knows that it is has to fetch something from products before running this file
+- 
+- The bootstrap.js file contains:
+```js
+import 'products/ProductsIndex';
+
+console.log('Container');
+```
+- Overall the big picture looks like this:
+- ![img_33.png](img_33.png)
+- This can further be explained by this
+- ![img_34.png](img_34.png)
+
+### Understanding Configuration Options inside the Module Federation Plugin
+- ![img_35.png](img_35.png)
+- Notice that inside bootstrap.js we have:
+```js
+import 'products/ProductsIndex';
+
+console.log('Container');
+```
+- This basically looks for 'products' inside the remotes section of the Module Federation Plugin inside webpack.config.js file of the container application
+- There we can find the location of products list(in this case: localhost:8081/remoteEntry.js)
+- ![img_36.png](img_36.png)
+- We can have multiple modules or components or files inside the Products application
+- We can choose what to expose to the outside containers
+- Another example is this
+- ![img_37.png](img_37.png)
+- Let's just say we just want barchart
+- We can specify that as following in the Container
+- ![img_38.png](img_38.png)
+
+### Scaffolding the Cart
+- ![img_39.png](img_39.png)
+- We will do the same exact steps as product
+- Add a package.json and install all the dependencies(same as product)
+- Next, add an index.js and add the following code to it
+```js
+import faker from "faker";
+
+const cartText = `<div>You have ${faker.random.number()} 
+                        items in your cart</div>`
+
+document.querySelector("#dev-cart").innerHTML = cartText;
+```
+- Next add an index.html with the following code:
+```html
+<!DOCTYPE html>
+<html>
+<head>
+
+</head>
+<body>
+<div id="dev-cart"></div>
+</body>
+</html>
+```
+- Next add a webpack.config.js and expose the cart Index page
+```js
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+
+module.exports = {
+    mode: 'development',
+    devServer: {
+        port: 8082,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'cart',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './CartShow':'./src/index'
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html'
+        })
+    ]
+}
+```
+- If we just run the cart in isolation we get this:
+- ![img_40.png](img_40.png)
+
+### Cart Integration
+- First modify the webpack.config.js file of container application as follows:
+```js
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");
+module.exports = {
+    mode: 'development',
+    devServer: {
+        port: 8080,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes:{
+                products : 'products@http://localhost:8081/remoteEntry.js',
+                cart:'cart@http://localhost:8082/remoteEntry.js',
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+}
+```
+- Next add the cart import to boostrap:
+```js
+import 'products/ProductsIndex';
+import 'cart/CartShow'
+
+console.log('Container');
+```
+- Next add a div with id of dev-cart inside the index.html file of the container app
+```html
+
+<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+<div id="dev-products"></div>
+<div id="dev-cart"></div>
+</body>
+</html>
+```
+- Finally, when we run it, we can see this
+- ![img_41.png](img_41.png)
+- Notice that we can see items in the cart alongside the products list
+
+### What the development process looks like while using Micro-frontends
+- ![img_42.png](img_42.png)
+- Notice the role of the html files
+- ![img_43.png](img_43.png)
+- We only use HTML files from the container application in Production
+- HTML files from products and cart are only for testing in development process
+
+## Sharing Dependencies Between Apps
+
