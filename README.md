@@ -345,9 +345,289 @@ console.log('Container');
 ### What the development process looks like while using Micro-frontends
 - ![img_42.png](img_42.png)
 - Notice the role of the html files
-- ![img_43.png](img_43.png)
+- ![img_43.png](img_43.png)~~~~
 - We only use HTML files from the container application in Production
 - HTML files from products and cart are only for testing in development process
 
 ## Sharing Dependencies Between Apps
+- Both Products and Cart need the faker module
+- ![img_44.png](img_44.png)
+- As we can see the faker dependency is being loaded twice(notice the vendor-node_modules file)
+- ![img_45.png](img_45.png)
+- It is almost 2.9 MB large
+- We would want both Product and Cart to share this dependency and load it up only once not twice
+- We can do this as follows:
+- ![img_46.png](img_46.png)
+- We just need to change a couple of configuration options
+- We include the option of shared
+```js
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+module.exports = {
+    mode: "development",
+    devServer: {
+        port: 8081,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'products',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './ProductsIndex':'./src/index'
+            },
+            shared:['faker'],
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+```
+- We would do the same changes to cart
+- No changes to container are required
+- Notice that the vendor-node_modules_faker_index_js.js file is loaded only once
+- ![img_47.png](img_47.png)
+- But now Product Application doesnot work in isolation
+- ![img_48.png](img_48.png)
+- Since faker is marked as a shared module, it only loads up asynchronously. 
+- It is not available for use inside the index.js file of Products
+- Remote Entry file has the time to load it up asynchronously, but it doesnot work in direct access to Products Application
+- Everything works inside the Container App but Cart App and Products App are broken
+
+### Async Script Loading
+- To fix this, we use the same pattern we use inside our container project
+- Add a bootstrap.js file inside the src folder and copy paste the code from index.js into bootstrap.js
+- Inside the index.js file include the following code:
+```js
+import('./bootstrap');
+```
+- Now everything works
+- ![img_49.png](img_49.png)
+- Container app also keeps working as before
+- We just have an extra request for bootstrap.js file
+- We need to do the same steps for Cart Application also
+
+### Shared Module Versioning
+- What if the faker module is on different versions on different applications
+- If we install faker on cart app to be of 5.5.3 version and on products app to be 4.1.0 version
+- In this case, inside the container app, the faker library is loaded twice
+- ![img_50.png](img_50.png)
+- This is correct and expected as different projects use different versions
+- We don't want our projects to use same copy of faker as they have different versions
+- Module Federation plugin takes a look at the versions used in package.json of each of the projects
+- If it detects different versions, it loads up both of them
+- If they use the same version, it loads it up only once.
+
+### Singleton Loading
+- Inside the module federation plugin, there are other modules like React which cannot be loaded multiple times into the browser
+- We cannot have multiple copies of React running
+- To simulate this, lets install different incompatible versions of faker module
+- Also lets change the product and cart webpack config file as follows:
+```js
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+module.exports = {
+    mode: "development",
+    devServer: {
+        port: 8081,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'products',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './ProductsIndex':'./src/index'
+            },
+            shared:['faker'],
+            // shared: {
+            //     faker:{
+            //         singleton: true,
+            //     }
+            // },
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+```
+- Notice that we are forcing it use a singleton object for faker module
+- Products will have 4.1.0 and Cart will have 5.1.0 version
+- When we run container, it will load up one copy, but it will also show a warning message:
+- ![img_51.png](img_51.png)
+- It is a sign from webpack saying it was not able to load up the versions as expected.
+
+### Sub-App Execution Context
+- Remember that we still need to run Products and Cart independently of the Container
+- But we are making a very big assumption
+- Remember we load up everything inside the div with an id: "dev-products" and "dev-cart"
+- We expect the container app to have the same div ids.
+- This may not be always possible as all 3 application are developed by different teams
+- We need to refactor our bootstrap.js file in product and cart applications
+- We make the following changes to our bootstrap.js in products to handle all the scenarios
+```js
+import faker from 'faker';
+
+const mount = (el) =>{
+    let products = '';
+    for(let i=0; i<5; i++){
+        const name = faker.commerce.productName(i);
+        products += `<div>${name}</div>`;
+    }
+
+    el.innerHTML = products;
+    //Can work with different frameworks like React
+    //ReactDOM.render(<App />,el);
+}
+
+//Context/Situation #1
+// Running this file in development in isolation with an id of dev-products
+//We want to render our app into an id of dev-products
+//Remember in webpack config we set mode to development or production
+if(process.env.NODE_ENV !== 'production'){
+ const el = document.querySelector('#dev-products');
+ //Assuming our container doesnot have an element with id of dev-products
+ if(el)
+ {
+     //We are probably running in isolation
+     mount(el);
+ }
+}
+
+
+//Context/Situation #2
+//Running this file in development or product through container app
+//No guarantee that an element with id of dev-products might exist
+//So we donot want to immediately render the app, if element doesnot exist
+//We will not call the mount function immediately
+//Using the export function, we can force the container to decide when to load the app on the screen
+export {mount};
+
+```
+- Now if run the products app in isolation, it works fine.
+- But now we will also have to make some changes to the container app since we are now exporting the mount function
+- Before, we make changes to container, we need to change webpack.config file to refer to the bootstrap file instead
+```js
+ exposes:{
+                './ProductsIndex':'./src/bootstrap'
+         },
+```
+- Next we will make changes to bootstrap.js file of container as follows
+- Note that it is importing the mount function and using that function to display products using its own custom div ID
+```js
+import {mount} from 'products/ProductsIndex';
+import 'cart/CartShow'
+
+console.log('Container');
+
+mount(document.querySelector('#my-products'));
+```
+- We will make similar changes to cart also
+- Change the bootstrap file as follows:
+```js
+import faker from "faker";
+
+
+
+const mount = (element) => {
+    const cartText = `<div>You have ${faker.random.number()} 
+                        items in your cart</div>`
+    element.innerHTML = cartText;
+}
+
+// Running in Development Environment
+if(process.env.NODE_ENV !== "production") {
+    const el = document.querySelector('#dev-cart');
+    if(el) {
+        mount(el);
+    }
+}
+
+//Running in Production
+export {mount};
+```
+- Change the webpack.config of cart as follows
+```js
+ exposes:{
+                './CartShow':'./src/bootstrap'
+         },
+```
+- Change the code for bootstrap.js for container app as follows:
+```js
+import {mount} from 'products/ProductsIndex';
+import {mount as mountCart}  from 'cart/CartShow';
+
+
+console.log('Container');
+
+mount(document.querySelector('#my-products'));
+mountCart(document.querySelector('#my-cart'));
+```
+
+### Bug in Module Federation Plugin
+- Remember we had to provide a name to our export inside webpack.config file
+```js
+plugins: [
+        new ModuleFederationPlugin({
+            name: 'cart',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './CartShow':'./src/bootstrap'
+            },
+            shared: ['faker'],
+            // shared: {
+            //     faker:{
+            //         singleton: true,
+            //     }
+            // },
+        }),
+```
+- Then when we import it inside container we have the following:
+```js
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");
+module.exports = {
+    mode: 'development',
+    devServer: {
+        port: 8080,
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes:{
+                products : 'products@http://localhost:8081/remoteEntry.js',
+                cart:'cart@http://localhost:8082/remoteEntry.js',
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+}
+```
+- However there is a bug
+- Inside the remoteEntry.js file we have this variable
+- ![img_52.png](img_52.png)
+- This cart variable loads up all the code inside that remoteEntry file
+- If we change cart:'cart@http://localhost:8082/remoteEntry.js' to cart:'mycart@http://localhost:8082/remoteEntry.js',
+- We now start seeing an error
+- We have to be careful as to how to name the cart variable.
+- But now lets say we go to our index.html file and change selector in container index.html file from 'my-cart' to just 'cart'
+- We also make similar changes in our bootstrap.js to reference this cart selector as follows
+```js
+//mountCart(document.querySelector('#my-cart'));
+mountCart(document.querySelector('#cart'));
+```
+- In theory everything should work fine.
+- But we get this error:
+- ![img_53.png](img_53.png)
+- This is because cart is being created a global variable
+- ![img_54.png](img_54.png)
+- ![img_55.png](img_55.png)
+- This is really misleading and is a BUG in Module Federation Plugin
+- If we have a selector inside HTML as the same name as what we are trying to expose('cart' in this case)
+- It will give error as that selector id #cart will overwrite the 'cart' global variable that is being exposed from cart application 
+- We need to make sure our elements in our DOM don't have the same ID which is exposed inside the remoteEntry.js file
+
+## Linking Multiple Apps Together
 
