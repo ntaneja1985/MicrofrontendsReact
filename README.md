@@ -630,4 +630,462 @@ mountCart(document.querySelector('#cart'));
 - We need to make sure our elements in our DOM don't have the same ID which is exposed inside the remoteEntry.js file
 
 ## Linking Multiple Apps Together
+- We will build a software as a service application
+- ![img_56.png](img_56.png) (Landing Page)
+- ![img_57.png](img_57.png) (Pricing Page)
+- ![img_58.png](img_58.png) (Sign In Page)
+- ![img_60.png](img_60.png) (SignUp Page)
+- ![img_59.png](img_59.png) (Dashboard Page)
+- We can group these pages together
+- ![img_61.png](img_61.png)
+- We will build 3 different micro-frontends:
+- ![img_63.png](img_63.png)
+- Please note integration techniques are identical irrespective of the frontend technology used
+
+### Establishing the Requirements that drive architecture choices
+- ![img_64.png](img_64.png)
+- ![img_65.png](img_65.png)
+- Our Project has specific requirements:
+- ![img_66.png](img_66.png)
+- We can only use shared libraries through module federation system
+- If there is tight coupling between Marketing and Authentication, if in the future, we replace Marketing, we will need to make changes to Authentication also
+- In some years, React will be an ancient framework
+- It is better to isolate applications
+- ![img_67.png](img_67.png)
+- We also need to make sure if the user logs in, then we should change text of Login button to Logout button
+- We need to have some communication between child and parent
+- ![img_68.png](img_68.png)
+- ![img_69.png](img_69.png)
+- ![img_70.png](img_70.png)
+
+### Initial Webpack Config
+- We don't use create-react-app or Vue CLI because both are currently shipping with a version of webpack that doesnot have Module Federation Plugin
+- Remember Module Federation Plugin was introduced in Webpack 5
+- This may change in the future
+- ![img_71.png](img_71.png)
+- We will create 2 files for webpack instead of 1 file being used earlier.
+- We need to specify Webpack configs for Production and Development
+- We will have a third file which will have some configuration common for both development and production
+- This pattern will be common for all projects
+- To start off inside the marketing project, we will create a folder: config and inside that specify 3 files
+- webpack.common.js, webpack.dev.js and webpack.prod.js
+- Inside the webpack.common.js we will have the following code
+```js
+module.exports = {
+    module: {
+        rules: [
+            //Loader tells Webpack to process some different files as we start to import them to our project
+            //First loader we use is Babel, which is in charge of processing all code from ES2015,16,17,etc to regular ES5 code
+            //which can easily be executed inside a typical browser
+            {
+                //Process all mjs and js files by babel
+                test: /\.m?js$/,
+                exclude: /node_modules/,
+                use:{
+                    loader: 'babel-loader',
+                    options: {
+                        //babel will process all JSX tags
+                        presets: ['@babel/preset-react','@babel/preset-env'],
+                        //Add in some code to enable some additional features like async/await syntax
+                        plugins:['@babel/plugin-transform-runtime']
+                    }
+                }
+            }
+        ]
+    }
+}
+```
+- Inside the webpack.dev.config, we will have the following code:
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const commonConfig = require('./webpack.common');
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8081,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+- We will create a src/index.js file and public/index.html file and run the marketing project
+- Remember earlier when we had 2 projects which were sharing dependencies and when we had to run them in isolation, they used to fail
+- We added a bootstrap.js and imported it inside index.js file
+- We are going to do something similar for marketing project
+- We will create a bootstrap.js and add the following code:
+```js
+import React  from "react";
+import ReactDOM from "react-dom";
+
+// Mount function to start up the app
+//Inside this function, we call ReactDOM.render method to display the text inside a placeholder on the page
+const mount = (el) =>{
+    ReactDOM.render(
+        <h1>Hi there!</h1>,
+        el
+    )
+}
+// If we are in development and in isolation
+// Call mount immediately
+if(process.env.NODE_ENV === "development"){
+    const devRoot = document.querySelector('#_marketing-dev-root');
+    if(devRoot){
+        mount(devRoot);
+    }
+}
+
+//We are running through container, and we should export the mount function
+export {mount};
+```
+
+## Generic Ties between Projects
+- First we are going to import the Landing and Pricing Components and display them 
+- Rather than dump everything in bootstrap.js file, we are going to create another file app.js with the following code:
+```js
+import React from 'react';
+import {Switch, Route, BrowserRouter} from 'react-router-dom';
+import {StylesProvider} from '@material-ui/core/styles';
+
+import Landing from './components/Landing';
+import Pricing from './components/Pricing';
+
+export default () =>{
+    return <div>
+        <StylesProvider>
+            <BrowserRouter>
+                <Switch>
+                    <Route exact path="/pricing" component={Pricing} />
+                    <Route exact path="/" component={Landing} />
+                </Switch>
+            </BrowserRouter>
+        </StylesProvider>
+    </div>
+}
+```
+- Now we are going to call this inside bootstrap.js file and render the App 
+```js
+import React  from "react";
+import ReactDOM from "react-dom";
+import App from "./App";
+
+// Mount function to start up the app
+const mount = (el) =>{
+    ReactDOM.render(
+        <App/>,
+        el
+    )
+}
+// If we are in development and in isolation
+// Call mount immediately
+if(process.env.NODE_ENV === "development"){
+    const devRoot = document.querySelector('#_marketing-dev-root');
+    if(devRoot){
+        mount(devRoot);
+    }
+}
+
+//We are running through container, and we should export the mount function
+export {mount};
+```
+- This shows output as follows:
+- ![img_72.png](img_72.png)
+
+### Setting up the Container
+- We will follow the same steps
+- Setup webpack.dev.config, webpack.common.config and webpack.prod.config files
+- Then we will setup src folder with bootstrap.js and index.js
+- Then we will create a public folder with index.html file inside of it
+- Inside our bootstrap.js we will have the following code:
+```js
+import React  from "react";
+import ReactDOM from "react-dom";
+import App from "./App";
+
+ReactDOM.render(<App />, document.querySelector("#root"));
+```
+- We will create a file App.js and have the following code inside of it
+```js
+import React from 'react';
+
+export default () =>{
+    return <h1>Hi there!</h1>
+}
+```
+
+### Integration of Container and Marketing
+- We are again going to make use of the Module Federation Plugin
+- From the marketing app, we are going to expose the bootstrap file
+- For this we will make the following changes in webpack.dev.js file for marketing
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common');
+
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8081,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'marketing',
+            filename: 'remoteEntry.js',
+            exposes: {
+                './MarketingApp': './src/bootstrap'
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+- From the container app we are going to import the remoteEntry file exposed by marketing app
+- For this we will make the following changes to webpack.dev.config file for container
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common');
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8080,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name:'container',
+            remotes:{
+                marketing: 'marketing@http://localhost:8081/remoteEntry.js'
+            }
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+- Now we can use this inside our App.js file inside container like this
+```js
+import React from 'react';
+import {mount} from 'marketing/MarketingApp'
+
+console.log(mount)
+
+export default () =>{
+    return <h1>Hi there!</h1>
+}
+```
+
+### Why import the mount function?
+- The mount function takes in an HTML element as an argument and displays some content inside of it
+- ![img_73.png](img_73.png)
+- But a question arises, why cant the Marketing App expose a React component which we can use inside container
+- This is because of inflexible requirement #2. There should be zero coupling between container and child apps
+- ![img_74.png](img_74.png)
+- What if container is in Vue.js and marketing is in React.js
+- We want communication to be as generic as possible
+- This is why we use a mount function
+
+### Generic Integration(Using mount function inside the container app)
+- First of all we will create a marketing component inside the container app
+- This component takes an import of the mount function and passes reference to its own div to render the content from marketing
+```js
+import {mount} from 'marketing/MarketingApp'
+import React,{useRef,useEffect} from 'react'
+
+export default () =>{
+    const ref = useRef(null)
+    useEffect(()=>{
+     mount(ref.current)
+    })
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- Now we will use this component inside container's App.js file like this:
+```js
+import React from 'react';
+import MarketingApp from "./components/MarketingApp";
+
+export default () =>{
+    return <>
+    <h1>Hi there!</h1>
+        <hr/>
+        <MarketingApp />
+    </>
+}
+```
+- This renders the application like this:
+- ![img_75.png](img_75.png)
+- ![img_76.png](img_76.png)
+- Note that when we load up the container app, it has files from both container app and marketing app
+- Note that 2 copies of React are being loaded as container uses React and Marketing uses React
+- For this we can use the shared option of the Module Federation Plugin:
+- First we will make changes to webpack.dev.config inside marketing app
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common');
+
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8081,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'marketing',
+            filename: 'remoteEntry.js',
+            exposes: {
+                './MarketingApp': './src/bootstrap'
+            },
+            shared: ['react', 'react-dom'],
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+- Similarly we will make changes to webpack.dev.config inside container app
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common');
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8080,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name:'container',
+            remotes:{
+                marketing: 'marketing@http://localhost:8081/remoteEntry.js'
+            },
+            shared: ['react', 'react-dom'],
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+- Now when we load up container app, we see something like this:
+- ![img_77.png](img_77.png)
+- It might get tedious to write up these shared modules array
+- One option is to get the packageJson as a JSON object inside our webpack.dev.config file
+- We can then pass the dependencies to the shared array as follows:
+```js
+//Can be used to merge 2 different webpack config objects
+//Helps to merge webpack config from the common file into dev config
+const {merge} = require('webpack-merge');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common');
+const packageJson = require('../package.json');
+
+
+const devConfig = {
+    mode: 'development',
+    devServer: {
+        port: 8081,
+        historyApiFallback: {
+            index: 'index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'marketing',
+            filename: 'remoteEntry.js',
+            exposes: {
+                './MarketingApp': './src/bootstrap'
+            },
+            //shared: ['react', 'react-dom'],
+            shared: packageJson.dependencies,
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+
+//export the merge of common config and devConfig
+module.exports = merge(commonConfig, devConfig)
+
+```
+
+## Implementing a CI/CD Pipeline
+- ![img_78.png](img_78.png)
+- Once our code gets processed by webpack, it loads up a file main.js into the browser
+- Then it makes a follow-up request to get the remoteEntry.js from marketing
+- The location of that file must be known at build-time.
+- ![img_79.png](img_79.png)
+- Having a fixed name of remoteEntry.js file can lead to caching issues.
+
+
+
+
+
+
+
 
