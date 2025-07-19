@@ -1081,6 +1081,1484 @@ module.exports = merge(commonConfig, devConfig)
 - The location of that file must be known at build-time.
 - ![img_79.png](img_79.png)
 - Having a fixed name of remoteEntry.js file can lead to caching issues.
+- ![img_80.png](img_80.png)
+- ![img_81.png](img_81.png)
+- ![img_82.png](img_82.png)
+- ![img_84.png](img_84.png)
+
+### Initial Git Setup
+- ![img_85.png](img_85.png)
+- Use the git init command to initialize a new git repo
+- Create a new gitignore file
+- Use the command git status to verify if the gitignore file is created in the right location
+- Use the commands
+```shell
+git add .
+git commit -m "Initial Commit"
+```
+- The above commands will create an initial commit
+- Take the github repository url
+- Run the command
+```shell
+git remote add origin git@github.com:ntaneja1985/mfe.git
+
+git push origin main
+```
+- The above commands will push code to github repository
+- ![img_86.png](img_86.png)
+
+### Production Webpack Config for Container
+- Specify the following in the webpack.prod.config file:
+- Here we will merge both common and prod config files
+```js
+//merge the common and prod.js file
+const {merge} = require('webpack-merge');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common.js');
+const packageJson = require('../package.json');
+
+const domain = process.env.PRODUCTION_DOMAIN;
+
+const prodConfig = {
+    //When we set mode to production, Module Federation Plugin will optimize JS files
+    //It will bundle and minify them for production
+    mode: 'production',
+    output: {
+        //All files for production will use this as a template to name them
+        //This will fix the caching issues
+        filename: '[name].[contenthash].js',
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes: {
+                //fetch the remote entry file from the domain specified in environment variables
+                marketing: `marketing@${domain}/marketing/remoteEntry.js`,
+            },
+            shared: packageJson.dependencies,
+        }),
+    ]
+};
+
+module.exports = merge(commonConfig, prodConfig);
+```
+- Remember in dev, we used to use HtmlWebpackPlugin to serve an index.html page.
+- We will move that particular setup to webpack.common.js file
+```js
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+module.exports = {
+    module: {
+        rules: [
+            //Loader tells Webpack to process some different files as we start to import them to our project
+            //First loader we use is Babel, which is in charge of processing all code from ES2015,16,17,etc to regular ES5 code
+            //which can easily be executed inside a typical browser
+            {
+                //Process all mjs and js files by babel
+                test: /\.m?js$/,
+                exclude: /node_modules/,
+                use:{
+                    loader: 'babel-loader',
+                    options: {
+                        //babel will process all JSX tags
+                        presets: ['@babel/preset-react','@babel/preset-env'],
+                        //Add in some code to enable some additional features like async/await syntax
+                        plugins:['@babel/plugin-transform-runtime']
+                    }
+                }
+            }
+        ]
+    },
+    plugins: [
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        }),
+    ]
+}
+```
+- Next, we will write a build command inside the package JSON file to build the config
+- Webpack processes all your source files (JavaScript, CSS, images, etc.) and combines them into optimized output files
+```js
+"scripts": {
+    "start": "webpack serve --config config/webpack.dev.js",
+    "build": "webpack --config config/webpack.prod.js"
+  },
+```
+- The --config config/webpack.prod.js flag tells webpack to use the production-specific configuration file, which typically includes:
+- Code minification and compression
+- Dead code elimination (tree shaking)
+- Asset optimization
+- Production-specific environment variables
+- Remember we had set up filenaming convention as [name].[contenthash].js
+- Look at the files generated:
+- ![img_87.png](img_87.png)
+- The long alphanumeric strings in the filenames (like 3f726d308966d312bb17) are content hashes. This is a webpack optimization feature that:
+- Enables efficient browser caching
+- Ensures files are re-downloaded only when their content changes
+- Helps with cache busting in production deployments
+- The multiple JavaScript files indicate that your webpack configuration is using code splitting, which breaks your application into smaller chunks for better performance and loading optimization.
+- This is exactly what you'd expect to see after running your webpack --config config/webpack.prod.js build command - your source code has been successfully bundled, optimized, and prepared for production deployment.
+
+### Production Webpack Config for Marketing
+- It will be similar to Production Config for container except that it will expose the contents of marketing
+```js
+const {merge} = require('webpack-merge');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const packageJson = require('../package.json');
+const commonConfig = require('./webpack.common.js');
+
+const prodConfig = {
+    mode: 'production',
+    output: {
+        filename: '[name].[contenthash].js',
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'marketing',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './MarketingApp': './src/bootstrap'
+            },
+            shared: packageJson.dependencies
+        })
+    ]
+};
+
+module.exports = merge(commonConfig, prodConfig)
+
+```
+- So similar to container, we will add a build script inside the package.Json and it will product a dist folder
+- ![img_88.png](img_88.png)
+
+### Understanding CI/CD pipelines
+- We will use Github Actions to implement CI/CD pipeline
+- ![img_89.png](img_89.png)
+- ![img_90.png](img_90.png)
+
+### Creating the container Action
+- We can use the Actions Tab in Github
+- ![img_91.png](img_91.png)
+- We can have a built-in editor of Github or we can write it ourselves
+- We will create a directory: .github/workflows/container.yml
+- Even github creates it in the same way:
+- ![img_92.png](img_92.png)
+- Create the following YAML file
+```yaml
+name: deploy-container
+
+# How to run on events
+on:
+  push:
+    branches:
+      - main
+    # Run only when changes are made inside the container project
+    paths:
+      - 'packages/container/**'
+
+# Set the execution environment to container folder
+defaults:
+  run:
+    working-directory: packages/container
+
+# Can have multiple jobs, but they all run in parallel
+# Can have one job just to build our project and another to deploy it
+jobs:
+  build:
+    # Which type of virtual machine this pipeline should run on
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - run: npm install
+      - run: npm run build
+
+      # Gain access to AWS CLI to run AWS Specific Commands
+      - uses: chrislennon/action-aws-cli@1.1
+      # Sync the dist folder, generated as result of npm run build to the AWS Bucket
+      - run: aws s3 sync dist s3://${{secrets.AWS_S3_BUCKET_NAME}}/container/latest
+      # Specify details of the S3 environment
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+
+```
+- ![img_93.png](img_93.png)
+
+## Deployment to AWS
+- S3 bucket is a large cloud based harddrive to store files
+- We can make these files available via AWS Cloudfront
+- Search for S3 Bucket
+- ![img_94.png](img_94.png)
+- ![img_95.png](img_95.png)
+- ![img_96.png](img_96.png)
+- To Allow anonymous access and allow static file hosting to the s3 bucket, do this
+- ![img_97.png](img_97.png)
+- ![img_98.png](img_98.png)
+- We will uncheck the setting that blocks all public access
+- ![img_99.png](img_99.png)
+- ![img_100.png](img_100.png)
+
+### Authoring a Bucket Policy
+- ![img_101.png](img_101.png)
+- Policies on AWS, allows various services to talk to each other and access various services inside of it
+- ![img_102.png](img_102.png)
+- We will create a policy that will allow our AWS Cloudfront Service to access all the files in the S3 bucket
+- ![img_103.png](img_103.png)
+- ![img_104.png](img_104.png)
+- ![img_105.png](img_105.png)
+- ![img_106.png](img_106.png)
+- ![img_107.png](img_107.png)
+- ![img_108.png](img_108.png)
+
+### Setting up the Cloudfront Distribution
+- A distribution is a set of files we want to make available to the outside world
+- ![img_109.png](img_109.png)
+- ![img_110.png](img_110.png)
+- We will create a web distribution
+- ![img_111.png](img_111.png)
+- ![img_112.png](img_112.png)
+- ![img_113.png](img_113.png)
+- ![img_114.png](img_114.png)
+- ![img_115.png](img_115.png)
+- ![img_116.png](img_116.png)
+- ![img_117.png](img_117.png)
+- ![img_118.png](img_118.png)
+- The application will be available here:
+- ![img_119.png](img_119.png)
+- We now need to sync our project back to S3
+
+### Creating and Assigning Keys
+- Remember this code in our Github Action file
+```yaml
+ # Gain access to AWS CLI to run AWS Specific Commands
+      - uses: chrislennon/action-aws-cli@1.1
+      # Sync the dist folder, generated as result of npm run build to the AWS Bucket
+      - run: aws s3 sync dist s3://${{secrets.AWS_S3_BUCKET_NAME}}/container/latest
+      # Specify details of the S3 environment
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+```
+- We need to setup these 3 environment variables
+- In AWS, we will generate access key and secret access key
+- We will use IAM to generate access keys
+- ![img_120.png](img_120.png)
+- ![img_123.png](img_123.png)
+- ![img_124.png](img_124.png)
+- We will use the least responsibility principle
+- ![img_125.png](img_125.png)
+- ![img_126.png](img_126.png)
+- So basically in IAM, we will create a user(with programmatic access), that has full access to s3 bucket and cloudfront
+- ![img_127.png](img_127.png)
+- So we will get the Access Key and Secret Access Key
+- We will copy over these to the settings in our repository
+- ![img_128.png](img_128.png)
+- ![img_129.png](img_129.png)
+- ![img_130.png](img_130.png)
+- ![img_132.png](img_132.png)
+
+### Re-Running the Build
+- ![img_133.png](img_133.png)
+- We will see a blank screen and error like this
+- ![img_134.png](img_134.png)
+- Micro-frontend apps usually have these kind of errors.
+- main.js is not at the root directory
+- AWS is trying to load up main.js from the root directory
+- It is nested inside container/latest
+- ![img_135.png](img_135.png)
+- We need our MFP plugin to load up the main.js from the correct path
+- Go to webpack.prod.js file
+- We need to specify the publicPath option
+- publicPath tells webpack where your application's assets (JavaScript files, CSS, images, etc.) will be served from when the application runs in production.
+- We will have the following in our webpack.prod.js file
+```js
+//merge the common and prod.js file
+const {merge} = require('webpack-merge');
+const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const commonConfig = require('./webpack.common.js');
+const packageJson = require('../package.json');
+
+const domain = process.env.PRODUCTION_DOMAIN;
+
+const prodConfig = {
+    //When we set mode to production, Module Federation Plugin will optimize JS files
+    //It will bundle and minify them for production
+    mode: 'production',
+    output: {
+        //All files for production will use this as a template to name them
+        //This will fix the caching issues
+        filename: '[name].[contenthash].js',
+        //Take all the filenames generated by MFP plugin and pre-pend them with this path
+        publicPath: '/container/latest/'
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes: {
+                //fetch the remote entry file from the domain specified in environment variables
+                marketing: `marketing@${domain}/marketing/remoteEntry.js`,
+            },
+            shared: packageJson.dependencies,
+        }),
+    ]
+};
+
+module.exports = merge(commonConfig, prodConfig);
+```
+- Asset Location: All generated files will be served from the /container/latest/ directory
+- File Naming: Files get names like main.abc123.js (with content hash for cache busting)
+- Full URLs: When webpack generates references to these files, they become /container/latest/main.abc123.js
+
+### Example Flow
+- Your container app gets deployed to a server
+- Files are placed in the /container/latest/ directory
+- The remoteEntry.js file is accessible at /container/latest/remoteEntry.js
+- When other microfrontends want to consume your modules, they fetch from this known path
+- Any dynamic imports or chunks will also be loaded from /container/latest/
+
+- We can now push our changes to github
+- Github will detect the change and start the build
+- It will automatically be deployed to AWS S3 bucket
+
+## Microfrontend-Specific AWS Config
+
+### Manual Cache Invalidations
+- When we create a new distribution, Cloudfront takes a look at all the files in our bucket.
+- If we add new files, cloudfront will add those as well.
+- Cloudfront doesnot automatically look at any changed files
+- Cloudfront ignores all updates made to the file
+- So we need to create an invalidation
+- It is a manual way of telling cloudfront that it needs to use the latest version of our file
+- ![img_136.png](img_136.png)
+- ![img_137.png](img_137.png)
+- ![img_138.png](img_138.png)
+
+### Automated Invalidation
+- When we deploy our application, we dont want to manually do invalidation every time.
+- We need to serve the latest version of our files automatically
+- We can use AWS CLI to automatically create an invalidation for us
+- Make changes to container.yaml file
+```yaml
+      # Add automated invalidation to force Cloudfront to use the latest version of the files
+      - run: aws cloudfront create-invalidation --distribution-id ${{ secrets.AWS_DISTRIBUTION_ID }} --paths "container/latest/index.html"
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+```
+- ![img_139.png](img_139.png)
+- ![img_140.png](img_140.png)
+- Automated invalidation takes place
+- ![img_141.png](img_141.png)
+
+### Setting up Marketing Deployment
+- Our marketing yaml file is similar as container.yml file, except that container is replaced with marketing
+- Remember inside our webpack.prod.config for container we had specified that the domain needs to be fetched from an environment variable
+```js
+const domain = process.env.PRODUCTION_DOMAIN;
+
+const prodConfig = {
+    //When we set mode to production, Module Federation Plugin will optimize JS files
+    //It will bundle and minify them for production
+    mode: 'production',
+    output: {
+        //All files for production will use this as a template to name them
+        //This will fix the caching issues
+        filename: '[name].[contenthash].js',
+        //Take all the filenames generated by MFP plugin and pre-pend them with this path
+        publicPath: '/container/latest/'
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'container',
+            remotes: {
+                //fetch the remote entry file from the domain specified in environment variables
+                marketing: `marketing@${domain}/marketing/remoteEntry.js`,
+            },
+            shared: packageJson.dependencies,
+        }),
+    ]
+};
+```
+- Now we need to setup this domain environment variable
+- Copy the URL
+- ![img_142.png](img_142.png)
+- Add a new secret in Github repo
+- ![img_143.png](img_143.png)
+- ![img_144.png](img_144.png)
+- Now modify container.yml to include the environment variable
+```yaml
+    steps:
+      - uses: actions/checkout@v2
+      - run: npm install
+      - run: npm run build
+        env:
+          PRODUCTION_DOMAIN: $ {{ secrets.PRODUCTION_DOMAIN }}
+```
+- We will also have to update public path property inside the marketing webpack.prod.config file
+```js
+const prodConfig = {
+    mode: 'production',
+    output: {
+        filename: '[name].[contenthash].js',
+        //Take all the filenames generated by MFP plugin and pre-pend them with this path
+        publicPath: '/marketing/latest/'
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'marketing',
+            filename: 'remoteEntry.js',
+            exposes:{
+                './MarketingApp': './src/bootstrap'
+            },
+            shared: packageJson.dependencies
+        })
+    ]
+};
+```
+- ![img_145.png](img_145.png)
+- ![img_146.png](img_146.png)
+- ![img_147.png](img_147.png)
+- ![img_148.png](img_148.png)
+
+### Production-Style Workflow
+- We dont work off the main branch
+- We usually create PRs and they are merged into main branch
+- ![img_149.png](img_149.png)
+- We will create a new branch
+- ![img_150.png](img_150.png)
+- Make changes and push
+- ![img_151.png](img_151.png)
+- ![img_152.png](img_152.png)
+- ![img_153.png](img_153.png)
+
+## Handling CSS in Micro-frontends
+- We had a Header component to container app
+```js
+import React from 'react';
+import MarketingApp from "./components/MarketingApp";
+import Header from "./components/Header";
+import {BrowserRouter} from "react-router-dom";
+
+
+
+
+export default () =>{
+    return <>
+        <BrowserRouter>
+            <div>
+        <Header />
+        <MarketingApp />
+            </div>
+        </BrowserRouter>
+    </>
+}
+```
+- We can see it works fine in development environment
+- ![img_154.png](img_154.png)
+- But when we push to production, we see it like this
+- ![img_155.png](img_155.png)
+- There are some challenges in handling CSS in microfrontend applications
+- ![img_156.png](img_156.png)
+- ![img_157.png](img_157.png)
+- We may see the Pricing Header as green
+- If any of our microfrontend projects have different CSS, CSS from one project may impact another project
+- We need to solve this
+
+### CSS Scoping Techniques
+- We need to write CSS that only affects one project and not the other projects
+- ![img_158.png](img_158.png)
+- We can use a CSS in JS library
+- ![img_159.png](img_159.png)
+- Vue and Angular have built in component style scoping
+- For namespacing all our CSS, at the root element of our project, we can add a class for.e.g like pricing or auth for authentication application
+- ![img_160.png](img_160.png)
+- However, it may be difficult to remember the scope each time we make changes to Sign In Page CSS
+- What if CSS comes from a CSS library like bootstrap
+- We can choose a component library that does css-in-js
+- One example is Material UI which makes use of css-in-js
+- What if we use a shared css library
+- ![img_161.png](img_161.png)
+- But it violates the principle of loose-coupling.
+- We probably don't want to use same the CSS library across all projects
+- What if we use different version of bootstrap in different projects
+- ![img_162.png](img_162.png)
+- It seems CSS-in-JS library option is the best
+
+### Understanding CSS in JS libraries
+- ![img_163.png](img_163.png)
+- The reason why our app is not working is production is because we have a className collision
+- ![img_164.png](img_164.png)
+- Material UI has a makeStyle method that takes all of our classes and generates a randomly-generated className
+```js
+const useStyles = makeStyles((theme) => ({
+    '@global': {
+        a: {
+            textDecoration: 'none',
+        },
+    },
+    icon: {
+        marginRight: theme.spacing(2),
+    },
+    heroContent: {
+        backgroundColor: theme.palette.background.paper,
+        padding: theme.spacing(8, 0, 6),
+    },
+    heroButtons: {
+        marginTop: theme.spacing(4),
+    }
+}));
+
+const cards = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+export default function Album() {
+    const classes = useStyles();
+
+    return (
+        <React.Fragment>
+            <main>
+                {/* Hero unit */}
+                <div className={classes.heroContent}>
+                    <Container maxWidth="sm">
+                        <Typography
+                            component="h1"
+                            variant="h2"
+                            align="center"
+                            color="textPrimary"
+                            gutterBottom
+                        >
+                            Home Page
+                        </Typography>
+        </React.Fragment>
+)
+```
+- ![img_165.png](img_165.png)
+- In production, selector is minified to jss1,jss2 etc
+- ![img_166.png](img_166.png)
+- ![img_167.png](img_167.png)
+- Whereas in development we have:
+- ![img_168.png](img_168.png)
+- The classNames are different in production and development because in production, the selectors are minified
+- This is causing classNames collisions
+- ![img_169.png](img_169.png)
+- ![img_170.png](img_170.png)
+- Notice that we have 2 different styling coming from our container and marketing application
+- This is causing the issues we are seeing
+
+### Fixing the ClassName collisions
+- Fixing it is going be pretty simple and straightforward.
+- When we build each of our different subprojects, rather than having our CSS in JS library use a not so random class name of JSS 1, 2, 3, 4.
+- We will have it generate a slightly different style of className right here.
+- We will make sure that this string is actually sufficiently random that it's not going collide against some randomly generated class name for another project.
+- Remember in Marketing App.JS we had added a StylesProvider
+- StylesProvider is a React component that is used to customize CSS and JS generation stuff
+- We will give this component an option to make sure it generates all the classNames for Production in a random manner.
+- Inside the App.js for marketing, do the following changes
+```js
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'ma'
+    productionPrefix: 'ma'
+});
+
+export default () =>{
+    return <div>
+        <StylesProvider generateClassName={generateClassName}>
+            <BrowserRouter>
+                <Switch>
+                    <Route exact path="/pricing" component={Pricing} />
+                    <Route exact path="/" component={Landing} />
+                </Switch>
+            </BrowserRouter>
+        </StylesProvider>
+    </div>
+}
+```
+- We need to do something similar for container as well(note the production prefix is different)
+```js
+import React from 'react';
+import MarketingApp from "./components/MarketingApp";
+import Header from "./components/Header";
+import {BrowserRouter} from "react-router-dom";
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'co'
+    productionPrefix: 'co'
+});
+
+
+export default () =>{
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+        <BrowserRouter>
+            <div>
+        <Header />
+        <MarketingApp />
+            </div>
+        </BrowserRouter>
+            </StylesProvider>
+    </>
+}
+```
+- Last thing we need to do is to redeploy to production
+- ![img_171.png](img_171.png)
+- ![img_172.png](img_172.png)
+- ![img_173.png](img_173.png)
+
+## Implementing Multi-Tier Navigation
+
+### Requirements
+- Navigation inside our application is broken
+- Routing Logic is needed inside both container and sub-applications
+- ![img_174.png](img_174.png)
+- ![img_175.png](img_175.png)
+- ![img_176.png](img_176.png)
+- ![img_177.png](img_177.png)
+- ![img_178.png](img_178.png)
+- Navigation should work both inside the container mode and in independent development mode
+- ![img_179.png](img_179.png)
+- ![img_180.png](img_180.png)
+- Communication between sub-apps must be as generic as possible
+
+### Possible Solutions
+- ![img_181.png](img_181.png)
+- ![img_182.png](img_182.png)
+- Here both container and marketing can have their own separate copy of React-Router
+- ![img_183.png](img_183.png)
+- ![img_184.png](img_184.png)
+
+#### How Routing Libraries work
+- There are several routing libraries like React-Router, Vue-Router, Angular-Router and so on.
+- These routing libraries consist of 2 different parts:
+- History Object and Router
+- ![img_185.png](img_185.png)
+- All routing libraties implement 3 different kind of history objects
+- There are 3 different methods of deciding what route a user is currently visiting inside our application
+- First method is the browser history object
+- ![img_186.png](img_186.png)
+- Another kind is hash history
+- ![img_187.png](img_187.png)
+- Another history is Memory History inside the router itself
+- ![img_188.png](img_188.png)
+- We have multi-tier routing approach
+- ![img_189.png](img_189.png)
+- We can tell react router which kind of history to use.
+- ![img_190.png](img_190.png)
+- Different libraries have their own history implementations
+- ![img_191.png](img_191.png)
+- So we will setup Browser History for container and Memory History for Container and authentication
+- If we go to App.js file for container, we find the following code:
+```jsx
+export default () =>{
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+            // This already implements Browser History
+            <BrowserRouter>
+                <div>
+                    <Header />
+                    <MarketingApp />
+                </div>
+            </BrowserRouter>
+        </StylesProvider>
+    </>
+}
+```
+- Next, for marketing we have the following code:
+- We are using Browser History for marketing and we need to update it to use Memory History
+```jsx
+export default () =>{
+    return <div>
+        <StylesProvider generateClassName={generateClassName}>
+            <BrowserRouter>
+                <Switch>
+                    <Route exact path="/pricing" component={Pricing} />
+                    <Route exact path="/" component={Landing} />
+                </Switch>
+            </BrowserRouter>
+        </StylesProvider>
+    </div>
+}
+```
+### Using Memory History
+- We will replace BrowserRouter with Router
+- We will create our history object inside bootstrap.js file and provide it to the App component
+- We will add this code inside our bootstrap.js file
+```jsx
+import {createMemoryHistory} from "history";
+
+// Mount function to start up the app
+const mount = (el) =>{
+
+    const history = createMemoryHistory();
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+}
+
+
+```
+- Then inside our App.js we will have the following code:
+```jsx
+export default ({history}) =>{
+    return <div>
+        <StylesProvider generateClassName={generateClassName}>
+            <Router history={history}>
+                <Switch>
+                    <Route exact path="/pricing" component={Pricing} />
+                    <Route exact path="/" component={Landing} />
+                </Switch>
+            </Router>
+        </StylesProvider>
+    </div>
+}
+```
+- However we see strange results, when we navigate to pricing, we dont see the URL changing
+- Also when we click on the "App" link to go to Homepage, nothing happens
+- Our routing logic above is broken
+- ![img_192.png](img_192.png)
+- When we click on pricing link the Browser history for container has not changed
+- ![img_193.png](img_193.png)
+- We need to sync all these history objects together
+- ![img_194.png](img_194.png)
+
+### Communication between Microfrontend Apps
+- We have these requirements
+- ![img_196.png](img_196.png)
+- Communication should be generic, as we may change router technology in the future
+- We need to use simple events, callbacks etc
+
+### Communication through Callbacks
+- ![img_197.png](img_197.png)
+- Container will pass a callback onNavigate() to marketing app when it calls its mount function
+- The marketing app's mount function will take the onNavigate() callback function and call it whenever its URL or path changes
+- For this we will make changes to MarketingApp.js component inside container as follows:
+```jsx
+export default () =>{
+    const ref = useRef(null)
+    useEffect(()=>{
+        mount(ref.current,{
+            onNavigate : ()=> {
+                console.log('The container noticed navigation in Marketing')
+            },
+        })
+    })
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- Next we will update mount function in bootstrap.js file in marketing application as follows:
+```jsx
+const mount = (el,{onNavigate}) =>{
+
+    const history = createMemoryHistory();
+
+    //Whenever the URL changes or path changes, we will call this function of container app
+    history.listen(onNavigate)
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+}
+```
+- ![img_198.png](img_198.png)
+- We now need to use that callback function to update Browser History inside the container
+
+
+### Syncing History Objects
+- The listen function from the MemoryHistory object in Marketing App also provides the location
+- We can use it inside MarketingApp.js inside container as follows:
+```jsx
+export default () =>{
+    const ref = useRef(null)
+    useEffect(()=>{
+        mount(ref.current,{
+            onNavigate : (location)=> {
+                console.log(location)
+                console.log('The container noticed navigation in Marketing')
+            },
+        })
+    })
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- ![img_199.png](img_199.png)
+- Observe the pathName
+- We will use this property to update the container browser history
+- We will do these changes inside MarketingApp in container application
+```jsx
+import {mount} from 'marketing/MarketingApp'
+import React,{useRef,useEffect} from 'react'
+import {useHistory} from 'react-router-dom'
+
+export default () =>{
+    const ref = useRef(null)
+    //Copy of the browser history inside the container
+    const history = useHistory()
+    useEffect(()=>{
+     mount(ref.current,{
+         //Get the path Name from the location object passed from history.listen() method of memoryHistory inside Marketing Application
+         onNavigate : ({pathName : nextPathName})=> {
+             console.log(nextPathName);
+             console.log('The container noticed navigation in Marketing')
+             //Update history object of Container App
+             history.push(nextPathName);
+         },
+     })
+    })
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- But we can get into an infinite loop here
+- Each history object keeps telling itself that path changed
+- So we need to add in a check
+```jsx
+import {mount} from 'marketing/MarketingApp'
+import React,{useRef,useEffect} from 'react'
+import {useHistory} from 'react-router-dom'
+
+export default () =>{
+    const ref = useRef(null)
+    //Copy of the browser history inside the container
+    const history = useHistory()
+    useEffect(()=>{
+     mount(ref.current,{
+         onNavigate : ({pathName : nextPathName})=> {
+             console.log(nextPathName);
+             console.log('The container noticed navigation in Marketing')
+             //Check if the current pathName inside Browser history is not the same as pathName passed from Marketing Application
+             if(history.location.pathname !== nextPathName){
+                 //Update history object of Container App
+                 history.push(nextPathName);
+             }
+         },
+     })
+    })
+    return <div ref={ref}>
+
+    </div>
+}
+```
+### Running Memory History in Isolation
+- If we run Marketing App in isolation we get this error:
+- ![img_200.png](img_200.png)
+- This is because onNavigate parameter is not defined when we run the app in isolation
+- To fix this we make the following changes in bootstrap.js file:
+```jsx
+import React  from "react";
+import ReactDOM from "react-dom";
+import App from "./App";
+import {createMemoryHistory} from "history";
+
+// Mount function to start up the app
+const mount = (el,{onNavigate}) =>{
+
+    const history = createMemoryHistory();
+
+    //Whenever the URL changes or path changes, we will call this function
+    if(onNavigate){
+        history.listen(onNavigate)
+    }
+    
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+}
+// If we are in development and in isolation
+// Call mount immediately
+if(process.env.NODE_ENV === "development"){
+    const devRoot = document.querySelector('#_marketing-dev-root');
+    if(devRoot){
+        mount(devRoot,{});
+    }
+}
+
+//We are running through container, and we should export the mount function
+export {mount};
+```
+
+
+### Communication from Container App to Marketing App
+- ![img_201.png](img_201.png)
+- We will add a method that will be returned from the mount function defined in bootstrap.js of Marketing App
+```jsx
+const mount = (el,{onNavigate}) =>{
+
+    const history = createMemoryHistory();
+
+    //Whenever the URL changes or path changes, we will call this function
+    if(onNavigate){
+        history.listen(onNavigate)
+    }
+
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+
+    return {
+        onParentNavigate(){
+            console.log('Container just navigated')
+
+        }
+    };
+}
+```
+- This function will be returned to the container app, and the container app can use its browser history's listen function to call this function
+- Code changes to container app will be as follows:
+```jsx
+import {mount} from 'marketing/MarketingApp'
+import React,{useRef,useEffect} from 'react'
+import {useHistory} from 'react-router-dom'
+
+export default () =>{
+    const ref = useRef(null)
+    //Copy of the browser history inside the container
+    const history = useHistory()
+    useEffect(()=>{
+     const {onParentNavigate} = mount(ref.current,{
+         onNavigate : ({pathName : nextPathName})=> {
+             console.log(nextPathName);
+             console.log('The container noticed navigation in Marketing')
+             //Check if the current pathName inside Browser history is not the same as pathName passed from Marketing Application
+             if(history.location.pathname !== nextPathName){
+                 //Update history object of Container App
+                 history.push(nextPathName);
+             }
+         },
+     })
+
+        history.listen(onParentNavigate);
+    },[])
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- ![img_202.png](img_202.png)
+- Make changes to bootstrap.js to update the pathName in Memory History of Marketing Application from the Parent(Container Application) browser history
+```jsx
+// Mount function to start up the app
+const mount = (el,{onNavigate}) =>{
+
+    const history = createMemoryHistory();
+
+    //Whenever the URL changes or path changes, we will call this function
+    if(onNavigate){
+        history.listen(onNavigate)
+    }
+
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+
+    return {
+        onParentNavigate({pathName : nextPathName}){
+            console.log('Container just navigated')
+            //Check if the current pathName inside Memory history is not the same as pathName passed from Parent Container Application
+            if(history.location.pathname !== nextPathName){
+                history.push(nextPathName);
+            }
+        }
+    };
+}
+```
+
+### Using Browser History in isolation
+- If we run Marketing App in isolation, we are using Memory History
+- This doesn't change anything in the address bar.
+- This can be confusing.
+- If we are using Marketing App in isolation, we should use Browser History object rather than Memory History
+- Inside the mount function, we will pass the defaultHistory parameter initially set to createBrowserHistory
+- We will check inside the mount function, that if default history object is provided, then use that or else createMemoryHistory
+```jsx
+import React  from "react";
+import ReactDOM from "react-dom";
+import App from "./App";
+import {createMemoryHistory, createBrowserHistory} from "history";
+
+// Mount function to start up the app
+const mount = (el,{onNavigate, defaultHistory}) =>{
+
+    //If default history is passed, use it or use createMemoryHistory
+    const history = defaultHistory || createMemoryHistory;
+
+    //Whenever the URL changes or path changes, we will call this function
+    if(onNavigate){
+        history.listen(onNavigate)
+    }
+
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+    
+    return {
+      onParentNavigate({pathName : nextPathName}){
+          console.log('Container just navigated')
+          //Check if the current pathName inside Memory history is not the same as pathName passed from Parent Container Application
+          if(history.location.pathname !== nextPathName){
+              history.push(nextPathName);
+          }
+      }  
+    };
+}
+// If we are in development and in isolation
+// Call mount immediately
+if(process.env.NODE_ENV === "development"){
+    const devRoot = document.querySelector('#_marketing-dev-root');
+    if(devRoot){
+        mount(devRoot,{defaultHistory: createBrowserHistory()});
+    }
+}
+
+//We are running through container, and we should export the mount function
+export {mount};
+```
+- Now navigation inside Marketing App works when running it in isolation
+- ![img_203.png](img_203.png)
+
+## Performance Considerations
+- We will set up the Auth App exactly like we setup the Marketing App
+- We will add components for SignIn and SignUp
+- However, when we start Auth app at localhost:8082 and navigate to localhost:8082/auth/sigin, we get this error:
+- ![img_204.png](img_204.png)
+- Remember the public path property we had set up when we were deploying our application to AWS, so that remoteEntry file knows where the files where which were created by Webpack
+- That public path property is important when we are running in development mode also
+- ![img_205.png](img_205.png)
+- ![img_206.png](img_206.png)
+- That's why we get this error:
+- ![img_207.png](img_207.png)
+- main.js is not at localhost:8082/auth/main.js rather it is at localhost:8082/main.js
+- We can try to fix it by specifying a publicPath:
+- ![img_208.png](img_208.png)
+- This would create problems later
+- ![img_209.png](img_209.png)
+- This would load up the main.js from the container app and not from the auth app
+- So setting publicPath to "/" will make the auth app work fine in development(running in isolation), but not when it is integrated with container app
+- ![img_210.png](img_210.png)
+- Fixing it is easy
+- ![img_211.png](img_211.png)
+- ![img_212.png](img_212.png)
+- Problem arises in Auth App and not in Marketing app because we have nested routes in Auth App like 'auth/signup' and 'auth/signin'
+- So we will fix it as follows for all of our 3 projects
+```js
+const devConfig = {
+    mode: 'development',
+    output:{
+        publicPath: 'http://localhost:8082/',
+    },
+    devServer: {
+        port: 8082,
+        historyApiFallback: {
+            index: '/index.html',
+        }
+    },
+    plugins: [
+        new ModuleFederationPlugin({
+            name: 'auth',
+            filename: 'remoteEntry.js',
+            exposes: {
+                './AuthApp': './src/bootstrap'
+            },
+            //shared: ['react', 'react-dom'],
+            shared: packageJson.dependencies,
+        }),
+        new HtmlWebpackPlugin({
+            template: './public/index.html',
+        })
+    ]
+};
+```
+- ![img_213.png](img_213.png)
+- ![img_214.png](img_214.png)
+
+### Integrating Auth App into the Container App
+- We will create a component AuthApp inside container /src/components folder
+- We will make changes to App.js in container app as follows:
+```jsx
+import React from 'react';
+import MarketingApp from "./components/MarketingApp";
+import Header from "./components/Header";
+import {BrowserRouter, Route,Switch} from "react-router-dom";
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+import AuthApp from "./components/AuthApp";
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'co'
+    productionPrefix: 'co'
+});
+
+
+export default () =>{
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+        <BrowserRouter>
+            <div>
+        <Header />
+        <Switch>
+            <Route exact path="/auth" component={AuthApp} />
+            <Route exact path="/" component={MarketingApp} />
+        </Switch>
+            </div>
+        </BrowserRouter>
+            </StylesProvider>
+    </>
+}
+```
+### Adding Initial State to Memory History
+- ![img_215.png](img_215.png)
+- We will modify the mount function in the bootstrap.js file of AuthApp to have some initialPath
+```jsx
+// Mount function to start up the app
+const mount = (el,{onNavigate, defaultHistory, initialPath}) =>{
+
+    //If default history is passed, use it or use createMemoryHistory
+    const history = defaultHistory || createMemoryHistory({
+        initialEntries: [initialPath],
+    });
+
+    //Whenever the URL changes or path changes, we will call this function
+    if(onNavigate){
+        history.listen(onNavigate)
+    }
+
+    ReactDOM.render(
+        <App history = {history}/>,
+        el
+    )
+```
+- Then when we call the mount() function inside Auth App's bootstrap.js file from Container App's AuthApp.js we will include the following code:
+```jsx
+export default () =>{
+    const ref = useRef(null)
+    //Copy of the browser history inside the container
+    const history = useHistory()
+    useEffect(()=>{
+        const {onParentNavigate} = mount(ref.current,{
+            initialPath: history.location.pathname,
+            onNavigate : ({pathName : nextPathName})=> {
+                console.log(nextPathName);
+                console.log('The container noticed navigation in Auth App')
+                //Check if the current pathName inside Browser history is not the same as pathName passed from Marketing Application
+                if(history.location.pathname !== nextPathName){
+                    //Update history object of Container App
+                    history.push(nextPathName);
+                }
+            },
+        })
+
+        history.listen(onParentNavigate);
+    },[])
+```
+
+### Lazily Loading SubApps
+- Let's say we navigate to the homepage
+- Then we want that the code for marketing app and container app should only load
+- The code for Auth App should not be loaded at that point
+- Only when we navigate to the Auth page, then the code for the Auth App should load
+- Basically, we want lazy loading and not eager loading
+- We can make use of lazy and Suspense from React
+- We will modify the App.js inside container app to include the following code:
+```jsx
+import React,{lazy,Suspense} from 'react';
+
+import Header from "./components/Header";
+import {BrowserRouter, Route,Switch} from "react-router-dom";
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+
+const MarketingLazy = lazy(() => import("./components/MarketingApp"));
+const AuthLazy = lazy(() => import("./components/AuthApp"));
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'co'
+    productionPrefix: 'co'
+});
+
+
+export default () =>{
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+        <BrowserRouter>
+            <div>
+        <Header />
+                <Suspense fallback={<div>Loading...</div>}>
+        <Switch>
+                <Route path="/auth" component={AuthLazy} />
+            <Route path="/" component={MarketingLazy} />
+        </Switch>
+                </Suspense>
+            </div>
+        </BrowserRouter>
+            </StylesProvider>
+    </>
+}
+```
+- Note that when we run the app, we only load up bootstrap.js from Marketing App and Container App and not from the AuthApp
+- ![img_216.png](img_216.png)
+- ![img_217.png](img_217.png)
+- ![img_218.png](img_218.png)
+
+### Adding a Loading Bar
+- Add the following component to Container App
+```jsx
+import React from 'react';
+import {makeStyles,createStyles} from "@material-ui/core/styles";
+import LinearProgress from "@material-ui/core/LinearProgress";
+
+const useStyles = makeStyles((theme) => {
+    return createStyles({
+        bar:{
+            width:'100%',
+            '& > * + *':{
+                marginTop:theme.spacing(2),
+            }
+        }
+    });
+});
+
+export default () =>{
+    const classes = useStyles();
+    return (
+        <div className={classes.bar}>
+            <LinearProgress/>
+        </div>
+    )
+}
+```
+- Modify the App.js to include this Progress bar in the fallback
+```jsx
+import Progress from "./components/Progress";
+export default () =>{
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+            <BrowserRouter>
+                <div>
+                    <Header />
+                    <Suspense fallback={<Progress/>}>
+                        <Switch>
+                            <Route path="/auth" component={AuthLazy} />
+                            <Route path="/" component={MarketingLazy} />
+                        </Switch>
+                    </Suspense>
+                </div>
+            </BrowserRouter>
+        </StylesProvider>
+    </>
+}
+```
+
+## Authentication in Microfrontends
+- ![img_219.png](img_219.png)
+- ![img_220.png](img_220.png)
+- Auth App doesnot have any logic for enforcing permissions or allowing access to certain routes or figuring out if user is logged in
+- It is only for sign-in and sign-up
+- We should centralize authentication logic inside Container App
+- Container App will communicate to each sub-app regarding the user's authentication status
+- ![img_221.png](img_221.png)
+- We will pass an onSignIn method from container to the auth app
+```jsx
+export default () =>{
+    const ref = useRef(null)
+    //Copy of the browser history inside the container
+    const history = useHistory()
+    useEffect(()=>{
+        const {onParentNavigate} = mount(ref.current,{
+            initialPath: history.location.pathname,
+            onSignIn: () =>{
+                console.log("User signed in")
+            },
+            onNavigate : ({pathName : nextPathName})=> {
+                console.log(nextPathName);
+                console.log('The container noticed navigation in Auth App')
+                //Check if the current pathName inside Browser history is not the same as pathName passed from Marketing Application
+                if(history.location.pathname !== nextPathName){
+                    //Update history object of Container App
+                    history.push(nextPathName);
+                }
+            },
+        })
+
+        history.listen(onParentNavigate);
+    },[])
+    return <div ref={ref}>
+
+    </div>
+}
+```
+- In the Auth App's bootstrap.js we will pass in this method to the SignIn function inside the SignIn component
+```jsx
+ ReactDOM.render(
+    <App onSignIn={onSignIn} history = {history}/>,
+    el
+)
+```
+- Inside app.js of Auth App we will have this code:
+```jsx
+export default ({history, onSignIn}) =>{
+    return <div>
+        <StylesProvider generateClassName={generateClassName}>
+            <Router history={history}>
+                <Switch>
+                    <Route path="/auth/signin">
+                        <SignIn onSignIn={onSignIn} />
+                    </Route>
+                    <Route path="/auth/signup" >
+                        <SignUp onSignIn={onSignIn} />
+                    </Route>
+                </Switch>
+            </Router>
+        </StylesProvider>
+    </div>
+}
+```
+- Finally inside the SignIn component we will have this code:
+```jsx
+<Button
+            type="submit"
+            fullWidth
+            variant="contained"
+            color="primary"
+            className={classes.submit}
+            onClick={onSignIn}
+          >
+```
+- ![img_222.png](img_222.png)
+- We can pass Authentication state to our components as follows:
+```jsx
+import React,{lazy,Suspense, useState} from 'react';
+
+import Header from "./components/Header";
+import Progress from "./components/Progress";
+import {BrowserRouter, Route,Switch} from "react-router-dom";
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+
+const MarketingLazy = lazy(() => import("./components/MarketingApp"));
+const AuthLazy = lazy(() => import("./components/AuthApp"));
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'co'
+    productionPrefix: 'co'
+});
+
+
+export default () =>{
+    const [isSignedIn, setIsSignedIn] = React.useState(false);
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+        <BrowserRouter>
+            <div>
+        <Header isSignedIn={isSignedIn} />
+                <Suspense fallback={<Progress/>}>
+        <Switch>
+                <Route path="/auth">
+                    <AuthLazy onSignIn = {()=> setIsSignedIn(true)}/>
+                </Route>
+            <Route path="/" component={MarketingLazy} />
+        </Switch>
+                </Suspense>
+            </div>
+        </BrowserRouter>
+            </StylesProvider>
+    </>
+}
+```
+- ![img_223.png](img_223.png)
+- To update isSignIn state onSignout, use this code:
+```jsx
+export default () =>{
+    const [isSignedIn, setIsSignedIn] = React.useState(false);
+    return <>
+        <StylesProvider generateClassName={generateClassName}>
+            <BrowserRouter>
+                <div>
+                    <Header onSignOut={()=>{setIsSignedIn(false)}} isSignedIn={isSignedIn} />
+                    <Suspense fallback={<Progress/>}>
+                        <Switch>
+                            <Route path="/auth">
+                                <AuthLazy onSignIn = {()=> setIsSignedIn(true)}/>
+                            </Route>
+                            <Route path="/" component={MarketingLazy} />
+                        </Switch>
+                    </Suspense>
+                </div>
+            </BrowserRouter>
+        </StylesProvider>
+    </>
+}
+```
+- And inside Header.js file we have
+```jsx
+export default function Header({ isSignedIn, onSignOut }) {
+    const classes = useStyles();
+
+    const onClick = () => {
+        if (isSignedIn && onSignOut) {
+            onSignOut();
+        }
+    };
+
+```
+
+### Adding an Auth Deploy yaml file
+```yaml
+name: deploy-auth
+
+# How to run on events
+on:
+  push:
+    branches:
+      - main
+    # Run only when changes are made inside the container project
+    paths:
+      - 'packages/auth/**'
+
+# Set the execution environment to container folder
+defaults:
+  run:
+    working-directory: packages/auth
+
+# Can have multiple jobs, but they all run in parallel
+# Can have one job just to build our project and another to deploy it
+jobs:
+  build:
+    # Which type of virtual machine this pipeline should run on
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - run: npm install
+      - run: npm run build
+
+      # Gain access to AWS CLI to run AWS Specific Commands
+      - uses: chrislennon/action-aws-cli@1.1
+      # Sync the dist folder, generated as result of npm run build to the AWS Bucket
+      - run: aws s3 sync dist s3://${{secrets.AWS_S3_BUCKET_NAME}}/auth/latest
+        # Specify details of the S3 environment
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # Add automated invalidation to force Cloudfront to use the latest version of the files
+      - run: aws cloudfront create-invalidation --distribution-id ${{ secrets.AWS_DISTRIBUTION_ID }} --paths "auth/latest/index.html"
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+```
+
+
+
+
+
+
 
 
 

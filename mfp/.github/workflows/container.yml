@@ -1,0 +1,44 @@
+name: deploy-container
+
+# How to run on events
+on:
+  push:
+    branches:
+      - main
+    # Run only when changes are made inside the container project
+    paths:
+      - 'packages/container/**'
+
+# Set the execution environment to container folder
+defaults:
+  run:
+    working-directory: packages/container
+
+# Can have multiple jobs, but they all run in parallel
+# Can have one job just to build our project and another to deploy it
+jobs:
+  build:
+    # Which type of virtual machine this pipeline should run on
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - run: npm install
+      - run: npm run build
+        env:
+          PRODUCTION_DOMAIN: $ {{ secrets.PRODUCTION_DOMAIN }}
+
+      # Gain access to AWS CLI to run AWS Specific Commands
+      - uses: chrislennon/action-aws-cli@1.1
+      # Sync the dist folder, generated as result of npm run build to the AWS Bucket
+      - run: aws s3 sync dist s3://${{secrets.AWS_S3_BUCKET_NAME}}/container/latest
+      # Specify details of the S3 environment
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # Add automated invalidation to force Cloudfront to use the latest version of the files
+      - run: aws cloudfront create-invalidation --distribution-id ${{ secrets.AWS_DISTRIBUTION_ID }} --paths "container/latest/index.html"
+        env:
+          AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
