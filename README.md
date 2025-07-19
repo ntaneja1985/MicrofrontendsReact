@@ -2553,6 +2553,161 @@ jobs:
           AWS_ACCESS_KEY_ID: $ {{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY }}
 ```
+- ![img_224.png](img_224.png)
+
+## Using other frontend frameworks
+- We will build dashboard using Vue.js
+- We will copy paste same folder structure from auth into dashboard application
+- We will modify the webpack.common.config file as follows:
+```js
+const {VueLoaderPlugin} = require('vue-loader');
+
+module.exports = {
+    entry: './src/index.js',
+    output: {
+        filename:'[name].[contenthash].js',
+    },
+    resolve: {
+        extensions: ['.js','.vue'],
+    },
+    module: {
+        rules: [
+            {
+                test: /\.(png|jpe?g|gif|svg|ttf|woff|eot)$/i,
+                use:[
+                    {loader: 'file-loader'},
+                ]
+            },
+            {
+                test : /\.vue$/,
+                use: 'vue-loader'
+            },
+            // Separate rule for CSS files
+            {
+                test: /\.css$/,
+                use: ['vue-style-loader', 'css-loader']
+            },
+            // Separate rule for SCSS files
+            {
+                test: /\.scss$/,
+                use: ['vue-style-loader', 'css-loader', 'sass-loader']
+            },
+            //Loader tells Webpack to process some different files as we start to import them to our project
+            //First loader we use is Babel, which is in charge of processing all code from ES2015,16,17,etc to regular ES5 code
+            //which can easily be executed inside a typical browser
+            {
+                //Process all mjs and js files by babel
+                test: /\.m?js$/,
+                exclude: /node_modules/,
+                use:{
+                    loader: 'babel-loader',
+                    options: {
+                        presets: ['@babel/preset-env'],
+                        //Add in some code to enable some additional features like async/await syntax
+                        plugins:['@babel/plugin-transform-runtime']
+                    }
+                }
+            }
+        ]
+    },
+    plugins: [new VueLoaderPlugin()],
+}
+```
+### Webpack Configuration for Vue.js
+
+This is a **Webpack configuration file** for a Vue.js project. Here's what each part does:
+
+### Main Purpose
+Tells Webpack how to bundle your Vue.js app into files browsers can understand.
+
+### Key Parts:
+
+### Entry & Output:
+- `entry`: Starting point - begins bundling from `./src/index.js`
+- `output`: Creates files with unique names (using content hashes for caching)
+
+### File Processing Rules:
+- **Images/Fonts** (`.png, .jpg, .svg, .ttf`, etc.) → Uses `file-loader` to handle them
+- **Vue files** (`.vue`) → Uses `vue-loader` to process Vue components
+- **Styles** (`.css, .scss`) → Uses multiple loaders to process CSS and Sass
+- **JavaScript** (`.js, .mjs`) → Uses `babel-loader` to convert modern JS to older JS that all browsers understand
+
+### Plugins:
+- `VueLoaderPlugin` → Required plugin to make Vue files work with Webpack
+
+## Simple Summary:
+This config tells Webpack: "Take my Vue.js code, images, and styles, then bundle everything into browser-ready files while converting modern JavaScript to work in older browsers."
+
+### Wiring up Container and Dashboard
+- This process is pretty much the same, we create a component DashboardApp.js and import the Dashboard Component
+- We then make changes in webpack.dev.config and webpack.prod.config to integrate dashboard specific settings
+- We then navigate to localhost:8080/dashboard:
+- ![img_225.png](img_225.png)
+
+### Protecting Access to the Dashboard
+- To protect access to dashboard, we need to use a useEffect hook inside the App.js file of container as follows:
+- If the user is not signed in and tries to access localhost:8080/dashboard, we will redirect him to the homepage
+```jsx
+import React,{lazy,Suspense, useState, useEffect} from 'react';
+
+import Header from "./components/Header";
+import Progress from "./components/Progress";
+import {Router, Route,Switch, Redirect} from "react-router-dom";
+import {StylesProvider, createGenerateClassName} from '@material-ui/core/styles';
+import {createBrowserHistory} from 'history';
+import {Dashboard} from "@material-ui/icons";
+
+const MarketingLazy = lazy(() => import("./components/MarketingApp"));
+const AuthLazy = lazy(() => import("./components/AuthApp"));
+const DashboardLazy = lazy(() => import("./components/DashboardApp"));
+
+const generateClassName = createGenerateClassName({
+    //Rather than generating classNames with prefix of jss, generate them with prefix of 'co'
+    productionPrefix: 'co'
+});
+
+const history = createBrowserHistory();
+
+export default () =>{
+    const [isSignedIn, setIsSignedIn] = React.useState(false);
+
+    useEffect(() => {
+        if(isSignedIn){
+            history.push('/dashboard');
+        }
+    }, [isSignedIn]);
+
+    return (<>
+
+        <Router history={history}>
+            <StylesProvider generateClassName={generateClassName}>
+            <div>
+        <Header onSignOut={()=>{setIsSignedIn(false)}} isSignedIn={isSignedIn} />
+                <Suspense fallback={<Progress/>}>
+        <Switch>
+                <Route path="/auth">
+                    <AuthLazy onSignIn = {()=> setIsSignedIn(true)}/>
+                </Route>
+            <Route path="/dashboard" >
+                {!isSignedIn && <Redirect to='/' />}
+                <DashboardLazy />
+            </Route>
+            <Route path="/" component={MarketingLazy} />
+        </Switch>
+                </Suspense>
+            </div>
+            </StylesProvider>
+        </Router>
+
+    </>)
+}
+```
+- The yaml file to deploy dashboard is similar to the ones we have to auth and marketing
+- ![img_226.png](img_226.png)
+
+## Summary
+- ![img_227.png](img_227.png)
+
 
 
 

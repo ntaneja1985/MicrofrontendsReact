@@ -23,6 +23,8 @@ const prodConfig = {
             remotes: {
                 //fetch the remote entry file from the domain specified in environment variables
                 marketing: `marketing@${domain}/marketing/latest/remoteEntry.js`,
+                auth: `auth@${domain}/auth/latest/remoteEntry.js`,
+                dashboard: `dashboard@${domain}/dashboard/latest/remoteEntry.js`,
             },
             shared: packageJson.dependencies,
         }),
